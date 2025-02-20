@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Five Crowns Online</title>
+    <style>
+        #gameArea {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        #canvas {
+            border: 2px solid #333;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        #playerHand, #drawPile, #discardPile {
+            margin: 15px;
+        }
+        .card {
+            display: inline-block;
+            width: 70px;
+            height: 100px;
+            border: 2px solid #333;
+            border-radius: 8px;
+            margin: 5px;
+            text-align: center;
+            line-height: 100px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            transition: transform 0.2s;
+        }
+        .card:hover {
+            transform: scale(1.05);
+        }
+        .star { background: #ffd700; color: #333; }
+        .heart { background: #ff6b6b; color: #fff; }
+        .club { background: #4ecdc4; color: #fff; }
+        .spade { background: #45b7d1; color: #fff; }
+        .diamond { background: #96c8a2; color: #fff; }
+        .joker { background: linear-gradient(45deg, #ff00ff, #00ffff); color: #fff; }
+        #drawPile, #discardPile {
+            padding: 10px;
+            background: #ddd;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #scoreboard {
+            margin-top: 15px;
+            font-size: 18px;
+            color: #333;
+        }
+        #goOut {
+            padding: 10px 20px;
+            font-size: 16px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #goOut:hover {
+            background: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameArea">
+        <canvas id="canvas" width="800" height="400"></canvas>
+        <div id="drawPile">Draw Pile</div>
+        <div id="discardPile">Discard Pile: <span id="discardTop"></span></div>
+        <div id="playerHand">Your Hand: <span id="handCards"></span></div>
+        <div id="scoreboard"></div>
+        <button id="goOut" style="display:none;">Go Out</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const socket = new WebSocket('ws://localhost:3000');
+        const playerId = Math.random().toString(36).substring(2, 15);
+        let playerName = prompt("Enter your name (Dinosaur or Sloth will be assigned if first two players):");
+        let gameState = {
+            round: 1,
+            players: {},
+            deck: [],
+            discard: [],
+            currentPlayer: null
+        };
+        let hand = [];
+
+        const suits = ['★', '♥', '♣', '♠', '♦'];
+        const ranks = ['3','4','5','6','7','8','9','10','J','Q','K'];
+
+        socket.onopen = () => {
+            socket.send(JSON.stringify({ type: 'join', playerId, name: playerName }));
+        };
+
+        socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'state') {
+                gameState = data.state;
+                hand = gameState.players[playerId]?.hand || [];
+                updateUI();
+                if (data.state.currentPlayer === playerId) {
+                    enableTurn();
+                }
+            }
+            if (data.type === 'endRound') {
+                alert(`Round ${gameState.round} ended! Scores: ${JSON.stringify(data.scores)}`);
+                hand = [];
+                updateUI();
+            }
+            if (data.type === 'error') {
+                alert(data.message);
+            }
+        };
+
+        function updateUI() {
+            document.getElementById('handCards').innerHTML = hand.map(card => {
+                const suit = card === 'Joker' ? 'joker' : suits.find(s => card.endsWith(s));
+                const suitClass = {
+                    '★': 'star', '♥': 'heart', '♣': 'club', '♠': 'spade', '♦': 'diamond', 'Joker': 'joker'
+                }[suit];
+                return `<div class="card ${suitClass}" onclick="discardCard('${card}')">${card}</div>`;
+            }).join('');
+            document.getElementById('discardTop').innerHTML = gameState.discard.length > 0 ? 
+                renderCard(gameState.discard[gameState.discard.length - 1]) : 'Empty';
+            document.getElementById('scoreboard').innerHTML = 
+                `Round ${gameState.round} - Scores: ${Object.entries(gameState.players)
+                    .map(([id, data]) => `${data.name}: ${data.score}`).join(', ')}`;
+            document.getElementById('goOut').style.display = canGoOut() && 
+                gameState.currentPlayer === playerId ? 'block' : 'none';
+        }
+
+        function renderCard(card) {
+            const suit = card === 'Joker' ? 'joker' : suits.find(s => card.endsWith(s));
+            const suitClass = {
+                '★': 'star', '♥': 'heart', '♣': 'club', '♠': 'spade', '♦': 'diamond', 'Joker': 'joker'
+            }[suit];
+            return `<div class="card ${suitClass}">${card}</div>`;
+        }
+
+        function enableTurn() {
+            document.getElementById('drawPile').onclick = () => drawCard('deck');
+            document.getElementById('discardPile').onclick = () => drawCard('discard');
+        }
+
+        function drawCard(source) {
+            socket.send(JSON.stringify({ 
+                type: 'draw', 
+                playerId, 
+                source 
+            }));
+            document.getElementById('drawPile').onclick = null;
+            document.getElementById('discardPile').onclick = null;
+        }
+
+        function discardCard(card) {
+            if (gameState.currentPlayer === playerId) {
+                socket.send(JSON.stringify({ 
+                    type: 'discard', 
+                    playerId, 
+                    card 
+                }));
+            }
+        }
+
+        function canGoOut() {
+            return isValidHand(hand, gameState.round);
+        }
+
+        document.getElementById('goOut').onclick = () => {
+            if (canGoOut()) {
+                socket.send(JSON.stringify({ type: 'goOut', playerId }));
+            }
+        };
+
+        function isValidHand(hand, round) {
+            const wild = ranks[round - 1];
+            const cards = hand.map(card => ({
+                rank: card === 'Joker' ? 'Joker' : card.slice(0, -1),
+                suit: card === 'Joker' ? null : card.slice(-1),
+                isWild: card === 'Joker' || card.startsWith(wild)
+            }));
+
+            const books = findBooks(cards);
+            const remainingCards = cards.filter(c => !books.some(b => b.includes(c)));
+            const runs = findRuns(remainingCards);
+
+            return books.concat(runs).flat().length === cards.length;
+        }
+
+        function findBooks(cards) {
+            const rankCount = {};
+            cards.forEach(card => {
+                rankCount[card.rank] = (rankCount[card.rank] || 0) + 1;
+            });
+            return Object.entries(rankCount)
+                .filter(([_, count]) => count >= 3)
+                .map(([rank]) => cards.filter(c => c.rank === rank || c.isWild));
+        }
+
+        function findRuns(cards) {
+            const rankOrder = ['3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+            const runs = [];
+
+            suits.forEach(suit => {
+                const suitCards = cards.filter(c => c.suit === suit || c.isWild)
+                    .sort((a, b) => rankOrder.indexOf(a.rank) - rankOrder.indexOf(b.rank));
+                let currentRun = [];
+                
+                for (let i = 0; i < suitCards.length; i++) {
+                    if (currentRun.length === 0 || 
+                        (rankOrder.indexOf(suitCards[i].rank) === rankOrder.indexOf(currentRun[currentRun.length - 1].rank) + 1) || 
+                        suitCards[i].isWild) {
+                        currentRun.push(suitCards[i]);
+                    } else if (currentRun.length >= 3) {
+                        runs.push([...currentRun]);
+                        currentRun = [suitCards[i]];
+                    } else {
+                        currentRun = [suitCards[i]];
+                    }
+                }
+                if (currentRun.length >= 3) runs.push(currentRun);
+            });
+            return runs;
+        }
+    </script>
+</body>
+</html>
